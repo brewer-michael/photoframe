@@ -57,7 +57,8 @@ class BaseService:
 
   STATE_READY = 999
 
-  def __init__(self, configDir, id, name, needConfig=False, needOAuth=False):
+  # Add support for uploading a JSON file for Immich config
+  def __init__(self, configDir, id, name, needConfig=False, needOAuth=False, needImmichConfig=False):
     # MUST BE CALLED BY THE IMPLEMENTING CLASS!
     self._ID = id
     self._NAME = name
@@ -85,6 +86,7 @@ class BaseService:
     }
     self._NEED_CONFIG = needConfig
     self._NEED_OAUTH = needOAuth
+    self._NEED_IMMICH_CONFIG = needImmichConfig
 
     self._DIR_BASE = self._prepareFolders(configDir)
     self._DIR_PRIVATE = os.path.join(self._DIR_BASE, 'private')
@@ -132,6 +134,8 @@ class BaseService:
         self.postSetup()
 
     if self._NEED_CONFIG and not self.hasConfiguration():
+      self._CURRENT_STATE = BaseService.STATE_DO_CONFIG
+    elif self._NEED_IMMICH_CONFIG and not self.hasImmichConfiguration():
       self._CURRENT_STATE = BaseService.STATE_DO_CONFIG
     elif self._NEED_OAUTH and (not self.hasOAuthConfig() or not self.hasOAuth()):
       self._CURRENT_STATE = BaseService.STATE_DO_OAUTH
@@ -313,6 +317,30 @@ class BaseService:
   def hasConfiguration(self):
     # Checks if it has auth data
     return self._STATE['_CONFIG'] != None
+
+  def hasImmichConfiguration(self):
+    # Checks if it has Immich config data
+    return self._STATE.get('_IMMICH_CONFIG') is not None
+
+  def setImmichConfiguration(self, config):
+    # Setup Immich configuration data
+    self._STATE['_IMMICH_CONFIG'] = config
+    self.saveState()
+
+  def getImmichConfiguration(self):
+    return self._STATE.get('_IMMICH_CONFIG')
+
+  def validateImmichConfiguration(self, config):
+    # Allow service to validate Immich config, if correct, return None
+    # If incorrect, return helpful error message.
+    return 'Not implemented yet but Immich config is enabled'
+
+  def getImmichConfigurationFields(self):
+    # Returns configuration fields for Immich
+    return {
+      'server_url': {'type': 'STR', 'name': 'Server URL', 'description': 'Immich server URL (e.g., http://localhost:2283)'},
+      'api_key': {'type': 'PW', 'name': 'API Key', 'description': 'Immich API key for authentication'}
+    }
 
   def getConfigurationFields(self):
     # Returns a key/value map with:

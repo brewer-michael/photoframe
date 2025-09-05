@@ -139,6 +139,8 @@ class Photoframe:
     self._loadRoute('details', 'RouteDetails', self.displayMgr, self.driverMgr, self.colormatch, self.slideshow, self.serviceMgr, self.settingsMgr)
     self._loadRoute('upload', 'RouteUpload', self.settingsMgr, self.driverMgr)
     self._loadRoute('oauthlink', 'RouteOAuthLink', self.serviceMgr, self.slideshow)
+    self._loadRoute('configupload', 'RouteConfigUpload', self.serviceMgr, self.slideshow)
+    self._loadRoute('immichconfigupload', 'RouteImmichConfigUpload', self.serviceMgr, self.slideshow)
     self._loadRoute('service', 'RouteService', self.serviceMgr, self.slideshow)
     self._loadRoute('control', 'RouteControl', self.slideshow)
     self._loadRoute('events', 'RouteEvents', self.eventMgr)

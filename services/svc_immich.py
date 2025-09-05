@@ -28,8 +28,8 @@ class Immich(BaseService):
   MAX_ITEMS = 8000
 
   def __init__(self, configDir, id, name):
-    # Copy Google Photos pattern exactly, just use needConfig instead of needOAuth
-    BaseService.__init__(self, configDir, id, name, needConfig=True, needOAuth=False)
+    # Copy Google Photos pattern exactly, just use needImmichConfig instead of needOAuth
+    BaseService.__init__(self, configDir, id, name, needConfig=False, needOAuth=False, needImmichConfig=True)
 
   # Replace OAuth methods with Config methods
   def getConfigurationFields(self):
@@ -53,21 +53,27 @@ class Immich(BaseService):
   def validateConfiguration(self, config):
     """
     Validates the provided configuration.
-    Copy Google Photos pattern - return True for success, error string for failure.
+    BaseService pattern: return None for success, error string for failure.
     """
+    logging.info(f'Immich validateConfiguration called with config: {config}')
+    
     # Basic validation of required fields
     if not config:
+      logging.error('Immich validation failed: Configuration is required')
       return 'Configuration is required'
       
     if 'server_url' not in config or not config['server_url']:
+      logging.error('Immich validation failed: Server URL is required')
       return 'Server URL is required'
       
     if 'api_key' not in config or not config['api_key']:
+      logging.error('Immich validation failed: API Key is required')
       return 'API Key is required'
       
     # Validate URL format
     server_url = config['server_url'].strip()
     if not server_url.startswith(('http://', 'https://')):
+      logging.error('Immich validation failed: Server URL must start with http:// or https://')
       return 'Server URL must start with http:// or https://'
       
     # Remove trailing slash for consistency
@@ -76,7 +82,7 @@ class Immich(BaseService):
     
     # For Phase 1, just validate format - don't test actual connection
     logging.info('Immich configuration validated successfully (Phase 1 - format only)')
-    return True  # True means validation passed
+    return True  # ServiceManager expects True for success (despite BaseService comment)
 
   def helpKeywords(self):
     """
