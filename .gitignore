@@ -106,3 +106,9 @@ ENV/
 
 # from developer leogaube
 /useful_commands
+
+# Docker build artifacts (keep configuration files)
+.dockerignore
+# Keep: Dockerfile, docker-compose.yml, requirements-docker.txt, DOCKER_SETUP.md
+
+.claude/

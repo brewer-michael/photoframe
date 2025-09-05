@@ -442,9 +442,28 @@ $('.oauth-json').fileupload({
   }
 });
 
+//Add config upload capability to support Immich service
+$('.config-json').fileupload({
+  add: function (e, data) {
+    data.submit();
+  },
+  done: function (e, data) {
+    alert('Configuration uploaded successfully!');
+    location.reload();
+  },
+  fail: function (e, data) {
+    alert('Failed to upload configuration:\n' + data.jqXHR.responseText);
+  }
+});
+
 $(".service-oauth").click(function() {
   // Disable alert since it breaks chrome and ie
   //alert("In the following file selector, please select the JSON file you donwloaded with client authentication data.\n\nIf you don't get a file selector, please make sure you don't have any adblockers blocking this website.");
+  $(this).prev().trigger('click');
+});
+
+//Add config upload capability to support Immich service
+$(".service-config").click(function() {
   $(this).prev().trigger('click');
 });
 
