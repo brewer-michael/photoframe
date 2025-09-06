@@ -48,6 +48,12 @@ class RouteImmichConfigUpload(BaseRoute):
                 data = json.load(file)
                 logging.info(f'Immich config upload for service {service}: {len(str(data))} bytes')
                 
+                # Validate Immich configuration first
+                validation_error = self.servicemgr.validateImmichServiceConfiguration(service, data)
+                if validation_error and validation_error is not True:
+                    logging.error(f'Immich config validation failed: {validation_error}')
+                    return f'Immich configuration is invalid: {validation_error}', 400
+
                 # Use Immich-specific service manager method to set configuration
                 if self.servicemgr.setImmichServiceConfiguration(service, data):
                     # Trigger slideshow refresh if service state changed
@@ -58,7 +64,7 @@ class RouteImmichConfigUpload(BaseRoute):
                     
                     return 'Immich configuration uploaded successfully', 200
                 else:
-                    return 'Immich configuration was invalid or could not be set', 405
+                    return 'Immich configuration was invalid or could not be set', 400
                     
             except json.JSONDecodeError as e:
                 logging.error(f'Invalid JSON in Immich config file: {e}')

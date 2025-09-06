@@ -194,7 +194,7 @@
 		{{/ifvalue}}
 		<!--Add config upload capability to support Immich service-->
 		{{#ifvalue state value="CONFIG" }}
-			<input style="position:absolute; top: -100px" type="file" data-url="service/{{id}}/config" data-service="{{id}}" class="config-json" name="filename" accept=".json">
+			<input style="position:absolute; top: -100px" type="file" data-url="service/{{id}}/{{immichConfigType}}" data-service="{{id}}" class="config-json" name="filename" accept=".json">
 			<input type="button" data-service="{{id}}" class="service-config" value="Upload Config">
 			Upload your configuration file with the required settings for this service.
 		{{/ifvalue}}

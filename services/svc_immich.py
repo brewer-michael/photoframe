@@ -50,7 +50,7 @@ class Immich(BaseService):
       }
     }
 
-  def validateConfiguration(self, config):
+  def validateImmichConfiguration(self, config):
     """
     Validates the provided configuration.
     BaseService pattern: return None for success, error string for failure.

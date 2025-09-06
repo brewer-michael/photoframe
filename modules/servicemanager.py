@@ -225,6 +225,35 @@ class ServiceManager:
     svc.setConfiguration(config)
     return True
 
+  def setImmichServiceConfiguration(self, service, config):
+    """Set Immich configuration for a service with validation."""
+    if service not in self._SERVICES:
+      return False
+    svc = self._SERVICES[service]['service']
+    if not hasattr(svc, '_NEED_IMMICH_CONFIG') or not svc._NEED_IMMICH_CONFIG:
+      return False
+    
+    # Validate configuration first
+    validation_result = svc.validateImmichConfiguration(config)
+    if validation_result is not True and validation_result is not None:
+      # validation_result contains error message
+      return False
+    
+    # Set configuration
+    svc.setImmichConfiguration(config)
+    self._configChanged()  # Trigger config change notification
+    return True
+
+  def validateImmichServiceConfiguration(self, service, config):
+    """Validate Immich configuration for a service."""
+    if service not in self._SERVICES:
+      return "Service not found"
+    svc = self._SERVICES[service]['service']
+    if not hasattr(svc, '_NEED_IMMICH_CONFIG') or not svc._NEED_IMMICH_CONFIG:
+      return "Service does not support Immich configuration"
+    
+    return svc.validateImmichConfiguration(config)
+
   def getServiceKeywords(self, service):
     if service not in self._SERVICES:
       return None
@@ -352,6 +381,12 @@ class ServiceManager:
       if readyOnly and self.getServiceState(k) != BaseService.STATE_READY:
         continue
       svc = self._SERVICES[k]
+      
+      # Determine config type based on service requirements  
+      immichConfigType = 'config'  # default
+      if hasattr(svc['service'], '_NEED_IMMICH_CONFIG') and svc['service']._NEED_IMMICH_CONFIG:
+        immichConfigType = 'immichconfig'
+      
       result.append({
         'name' : svc['service'].getName(),
         'service' : svc['service'].SERVICE_ID,
@@ -361,6 +396,7 @@ class ServiceManager:
         'hasSourceUrl' : svc['service'].hasKeywordSourceUrl(),
         'hasDetails' : svc['service'].hasKeywordDetails(),
         'messages' : svc['service'].getMessages(),
+        'immichConfigType' : immichConfigType,  # NEW FIELD
       })
     return result
 
