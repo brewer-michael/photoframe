@@ -72,6 +72,7 @@ class WebServer(Thread):
         self.app.error_handler_spec = {None: {None : { Exception : self._showException }}}
         os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
         self.app.secret_key = os.urandom(24)
+        self._register_error_handlers()
         self._registerHandlers()
         self.authmethod = self.auth.login_required(lambda: None)
         self.app.after_request(self._nocache)
@@ -82,6 +83,24 @@ class WebServer(Thread):
             return
 
         return self.authmethod()
+
+    def _register_error_handlers(self):
+        """Register Flask error handlers to prevent HTTP 500 cascading errors."""
+        @self.app.errorhandler(400)
+        def bad_request(error):
+            return {'error': 'Bad request', 'message': str(error)}, 400
+        
+        @self.app.errorhandler(404)  
+        def not_found(error):
+            return {'error': 'Not found', 'message': str(error)}, 404
+        
+        @self.app.errorhandler(405)
+        def method_not_allowed(error):
+            return {'error': 'Method not allowed', 'message': str(error)}, 405
+        
+        @self.app.errorhandler(500)
+        def internal_error(error):
+            return {'error': 'Internal server error', 'message': str(error)}, 500
 
     def start(self):
         if self.async_mode:  # Updated from async
