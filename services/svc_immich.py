@@ -18,8 +18,9 @@ import os
 import json
 import logging
 import time
+import requests
 
-from modules.network import RequestResult
+from modules.network import RequestResult, RequestNoNetwork
 from modules.helper import helper
 
 class Immich(BaseService):
@@ -126,16 +127,33 @@ class Immich(BaseService):
     return extras[keyword]['sourceUrl']
 
   def getKeywordDetails(self, index):
-    # Copy Google Photos pattern but simplified for Phase 1
+    # Enhanced to show real album details
     keys = self.getKeywords()
     if index < 0 or index >= len(keys):
       return f'Out of range, index = {index}'
     keyword = keys[index]
-
-    # Phase 1: Return basic info since we don't fetch images yet
+    extras = self.getExtras()
+    
+    if keyword not in extras:
+      return {
+        'short': f'Album "{keyword}" not found in extras',
+        'long': ['Album information missing', 'Try removing and re-adding this album']
+      }
+    
+    album_info = extras[keyword]
+    asset_count = album_info.get('assetCount', 0)
+    created_at = album_info.get('createdAt', 'Unknown')
+    description = album_info.get('description', 'No description')
+    
     return {
-      'short': f'Album "{keyword}" configured (Phase 1 - no image fetching yet)',
-      'long': ['Phase 1: Configuration complete', 'Image fetching will be implemented in Phase 2']
+      'short': f'Album "{keyword}" - {asset_count} assets',
+      'long': [
+        f'Album ID: {album_info.get("albumId", "Unknown")}',
+        f'Assets: {asset_count}',
+        f'Created: {created_at[:10] if created_at != "Unknown" else "Unknown"}',
+        f'Description: {description if description else "No description"}',
+        'Phase 1: Photo retrieval will be implemented in Phase 2'
+      ]
     }
 
   def hasKeywordDetails(self):
@@ -161,28 +179,130 @@ class Immich(BaseService):
     else:
       return False
 
+  def discoverAlbums(self):
+    """
+    Discover albums from Immich server by calling GET /api/albums.
+    Returns dict with 'success', 'albums', and 'error' keys.
+    Albums list contains dicts with 'id', 'albumName', etc.
+    """
+    config = self.getImmichConfiguration()
+    if not config or 'server_url' not in config or 'api_key' not in config:
+      return {'success': False, 'albums': [], 'error': 'Immich configuration not found'}
+    
+    server_url = config['server_url']
+    api_key = config['api_key']
+    
+    # Construct the albums API endpoint
+    albums_url = f"{server_url}/api/albums"
+    
+    # Set up headers with API key authentication
+    headers = {
+      'x-api-key': api_key,
+      'Accept': 'application/json'
+    }
+    
+    try:
+      logging.debug(f'Immich discoverAlbums: calling GET {albums_url}')
+      
+      # Use the same retry logic as BaseService.requestUrl
+      tries = 0
+      response = None
+      while tries < 5:
+        try:
+          response = requests.get(albums_url, headers=headers, timeout=180)
+          break
+        except requests.exceptions.RequestException as e:
+          logging.exception(f'Issues calling Immich albums API, attempt {tries + 1}')
+          if tries == 4:  # Last attempt
+            raise RequestNoNetwork(f'Failed to connect to Immich server: {str(e)}')
+        
+        time.sleep(tries * 10)  # Back off 10, 20, ... depending on tries
+        tries += 1
+        logging.warning(f'Retrying Immich albums API call, attempt #{tries + 1}')
+      
+      if response.status_code == 200:
+        albums_data = response.json()
+        logging.info(f'Immich discoverAlbums: successfully retrieved {len(albums_data)} albums')
+        return {'success': True, 'albums': albums_data, 'error': None}
+      elif response.status_code == 401:
+        logging.error(f'Immich API authentication failed: {response.status_code}')
+        return {'success': False, 'albums': [], 'error': 'Authentication failed. Please check your API key.'}
+      else:
+        logging.error(f'Immich albums API returned error: {response.status_code} - {response.text}')
+        return {'success': False, 'albums': [], 'error': f'Server returned error {response.status_code}'}
+        
+    except RequestNoNetwork as e:
+      logging.error(f'Immich discoverAlbums network error: {str(e)}')
+      return {'success': False, 'albums': [], 'error': f'Network error: {str(e)}'}
+    except Exception as e:
+      logging.exception('Unexpected error in discoverAlbums')
+      return {'success': False, 'albums': [], 'error': f'Unexpected error: {str(e)}'}
+
   def validateKeywords(self, keywords):
-    # Copy Google Photos pattern but simplified for Phase 1
+    # Follow BaseService pattern for validation
     tst = BaseService.validateKeywords(self, keywords)
     if tst["error"] is not None:
       return tst
 
     # Remove quotes and normalize
-    if keywords[0] == '"' and keywords[-1] == '"':
+    if len(keywords) >= 2 and keywords[0] == '"' and keywords[-1] == '"':
       keywords = keywords[1:-1]
     keywords = keywords.strip()
 
-    # Phase 1: Accept any non-empty keyword (album name)
+    # Basic validation
     if not keywords:
       return {'error': 'Album name cannot be empty', 'keywords': keywords}
 
-    # For Phase 1, we'll store a placeholder album info
+    # Discover albums from Immich server
+    discovery_result = self.discoverAlbums()
+    if not discovery_result['success']:
+      logging.error(f'Immich album discovery failed: {discovery_result["error"]}')
+      return {'error': f'Failed to connect to Immich server: {discovery_result["error"]}', 'keywords': keywords}
+    
+    albums = discovery_result['albums']
+    if not albums:
+      return {'error': 'No albums found on Immich server', 'keywords': keywords}
+    
+    # Find matching album(s) - case insensitive search
+    matching_albums = []
+    keyword_lower = keywords.lower()
+    
+    for album in albums:
+      # Handle both 'albumName' and 'name' fields for robustness
+      album_name = album.get('albumName', album.get('name', ''))
+      if album_name and album_name.lower() == keyword_lower:
+        matching_albums.append(album)
+    
+    # Handle matching results
+    if len(matching_albums) == 0:
+      available_names = [album.get('albumName', album.get('name', 'Unknown')) for album in albums[:10]]
+      available_list = ', '.join(available_names)
+      if len(albums) > 10:
+        available_list += f', ... and {len(albums) - 10} more'
+      return {'error': f'No album found with name "{keywords}". Available albums: {available_list}', 'keywords': keywords}
+    
+    if len(matching_albums) > 1:
+      logging.warning(f'Multiple albums found with name "{keywords}", using the first one')
+    
+    # Use the first matching album
+    matched_album = matching_albums[0]
+    
+    # Construct album info with real data
+    config = self.getImmichConfiguration()
+    server_url = config.get('server_url', '')
+    
     albumInfo = {
-      'albumId': f'placeholder-{keywords}',
-      'sourceUrl': f'{self.getConfiguration().get("server_url", "")}/albums',
-      'albumName': keywords
+      'albumId': matched_album.get('id'),
+      'sourceUrl': f'{server_url}/albums/{matched_album.get("id")}',
+      'albumName': matched_album.get('albumName', matched_album.get('name', keywords)),
+      'description': matched_album.get('description', ''),
+      'assetCount': matched_album.get('assetCount', 0),
+      'createdAt': matched_album.get('createdAt', ''),
+      'updatedAt': matched_album.get('updatedAt', '')
     }
-
+    
+    logging.info(f'Immich album discovered: "{keywords}" -> ID: {albumInfo["albumId"]}, Assets: {albumInfo["assetCount"]}')
+    
     return {'error': None, 'keywords': keywords, 'extras': albumInfo}
 
   def addKeywords(self, keywords):
