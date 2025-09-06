@@ -244,6 +244,16 @@ class ServiceManager:
     self._configChanged()  # Trigger config change notification
     return True
 
+  def getImmichServiceConfiguration(self, service):
+    """Get Immich configuration for a service."""
+    if service not in self._SERVICES:
+      return None
+    svc = self._SERVICES[service]['service']
+    if not hasattr(svc, '_NEED_IMMICH_CONFIG') or not svc._NEED_IMMICH_CONFIG:
+      return None
+    
+    return svc.getImmichConfiguration()
+
   def validateImmichServiceConfiguration(self, service, config):
     """Validate Immich configuration for a service."""
     if service not in self._SERVICES:

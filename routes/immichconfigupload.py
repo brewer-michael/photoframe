@@ -24,7 +24,7 @@ class RouteImmichConfigUpload(BaseRoute):
         self.servicemgr = servicemgr
         self.slideshow = slideshow
 
-        self.addUrl('/service/<service>/immichconfig').clearMethods().addMethod('POST')
+        self.addUrl('/service/<service>/immichconfig').clearMethods().addMethod('POST').addMethod('GET')
 
     def handle(self, app, **kwargs):
         service = kwargs.get('service')
@@ -72,5 +72,20 @@ class RouteImmichConfigUpload(BaseRoute):
             except Exception as e:
                 logging.error(f'Error processing Immich config upload: {e}')
                 return 'Error processing Immich configuration file', 500
+                
+        elif self.getRequest().method == 'GET':
+            # Handle Immich config retrieval
+            try:
+                config = self.servicemgr.getImmichServiceConfiguration(service)
+                if config is None:
+                    logging.warning(f'No Immich configuration found for service: {service}')
+                    return 'No Immich configuration found for this service', 404
+                
+                logging.info(f'Retrieved Immich config for service {service}')
+                return config, 200
+                
+            except Exception as e:
+                logging.error(f'Error retrieving Immich config for service {service}: {e}')
+                return 'Error retrieving Immich configuration', 500
         else:
             return self.setAbort(405)
