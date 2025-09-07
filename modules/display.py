@@ -42,6 +42,11 @@ class display:
         if self.emulate:
             logging.info('Using framebuffer emulation')
         self.lastMessage = None
+        
+        # Check if tvservice is available for backward compatibility
+        self.has_tvservice = self._check_tvservice_available()
+        if not self.has_tvservice:
+            logging.info('tvservice not available, using modern display detection methods')
 
     def setConfigPage(self, url):
         self.url = url
@@ -251,18 +256,31 @@ class display:
             return
 
         if enable:
-            if self.special:
-                debug.subprocess_call(['tvservice', '-p', self.special], stderr=self.void)
+            if self.has_tvservice:
+                # Use traditional tvservice method
+                if self.special:
+                    debug.subprocess_call(['tvservice', '-p', self.special], stderr=self.void)
+                else:
+                    debug.subprocess_call(['tvservice', '-p', self.params], stderr=self.void)
+                time.sleep(1)
             else:
-                debug.subprocess_call(['tvservice', '-p', self.params], stderr=self.void)
-            time.sleep(1)
+                # Use modern fallback - framebuffer is already configured
+                logging.info('Using modern display enable (framebuffer already active)')
+                
+            # Common framebuffer configuration for both methods
             debug.subprocess_call(['fbset', '-depth', str(self.depth)], stderr=self.void)
             debug.subprocess_call(['fbset', '-g', str(self.width), str(self.height), str(self.width), str(self.height), str(self.depth)], stderr=self.void)
             debug.subprocess_call(['fbset', '-accel', 'true'], stderr=self.void)
             debug.subprocess_call(['fbset', '-move', 'up'], stderr=self.void)
             debug.subprocess_call(['fbset', '-move', 'down'], stderr=self.void)
         else:
-            debug.subprocess_call(['tvservice', '-o'], stderr=self.void)
+            if self.has_tvservice:
+                debug.subprocess_call(['tvservice', '-o'], stderr=self.void)
+            else:
+                # Modern systems: we can't really disable the framebuffer, just clear it
+                logging.info('Modern display disable (clearing framebuffer)')
+                # Clear by setting to minimal resolution
+                debug.subprocess_call(['fbset', '-g', '1', '1', '1', '1', '8'], stderr=self.void)
 
         self.enabled = enable
 
@@ -315,68 +333,214 @@ class display:
 
     @staticmethod
     def available():
+        """Get available display modes using hybrid detection (tvservice or modern fallback)"""
         result = []
+        
+        # Try tvservice first (backward compatibility)
+        tvservice_available = False
         try:
-            output = subprocess.check_output(['tvservice', '-m', 'CEA'], stderr=subprocess.DEVNULL).decode('utf-8')
-            for line in output.split('\n'):
-                if line.startswith('mode '):
-                    result.append(line[5:])
-        except:
+            subprocess.run(['tvservice', '--help'], capture_output=True, timeout=5, check=False)
+            tvservice_available = True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
+        
+        if tvservice_available:
+            # Use traditional tvservice method
+            try:
+                output = subprocess.check_output(['tvservice', '-m', 'CEA'], stderr=subprocess.DEVNULL).decode('utf-8')
+                for line in output.split('\n'):
+                    if line.startswith('mode '):
+                        result.append(line[5:])
+            except:
+                pass
 
-        try:
-            output = subprocess.check_output(['tvservice', '-m', 'DMT'], stderr=subprocess.DEVNULL).decode('utf-8')
-            for line in output.split('\n'):
-                if line.startswith('mode '):
-                    result.append(line[5:])
-        except:
-            pass
-
+            try:
+                output = subprocess.check_output(['tvservice', '-m', 'DMT'], stderr=subprocess.DEVNULL).decode('utf-8')
+                for line in output.split('\n'):
+                    if line.startswith('mode '):
+                        result.append(line[5:])
+            except:
+                pass
+        else:
+            # Use modern fallback method
+            logging.info('tvservice unavailable, using modern display detection')
+            # Create a temporary display instance to access modern methods
+            temp_display = display()
+            result = temp_display._modern_available()
+            
         return result
 
     @staticmethod
     def validate(tvservice, special):
-        # Takes a string and returns valid width, height, depth and service
-        if special:
+        """Validate display mode using hybrid detection (tvservice or modern fallback)"""
+        # Check if tvservice is available
+        tvservice_available = False
+        try:
+            subprocess.run(['tvservice', '--help'], capture_output=True, timeout=5, check=False)
+            tvservice_available = True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        if tvservice_available:
+            # Use traditional tvservice validation
+            if special:
+                try:
+                    output = subprocess.check_output(['tvservice', '-s'], stderr=subprocess.DEVNULL).decode('utf-8')
+                    if output.find(special) != -1:
+                        return {
+                            'width': 1280,
+                            'height': 720,
+                            'depth': 32,
+                            'reverse': False,
+                            'tvservice': special
+                        }
+                except:
+                    pass
+
+            if not tvservice:
+                return None
+
             try:
                 output = subprocess.check_output(['tvservice', '-s'], stderr=subprocess.DEVNULL).decode('utf-8')
-                if output.find(special) != -1:
+                if output.find(tvservice) == -1:
+                    return None
+            except:
+                return None
+
+            try:
+                output = subprocess.check_output(['tvservice', '-v', tvservice], stderr=subprocess.DEVNULL).decode('utf-8')
+                m = re.search(r'(\d+)x(\d+)', output)
+                if m:
+                    width = int(m.group(1))
+                    height = int(m.group(2))
+                    depth = 32
+                    reverse = False
                     return {
-                        'width': 1280,
-                        'height': 720,
-                        'depth': 32,
-                        'reverse': False,
-                        'tvservice': special
+                        'width': width,
+                        'height': height,
+                        'depth': depth,
+                        'reverse': reverse,
+                        'tvservice': tvservice
                     }
             except:
                 pass
+        else:
+            # Use modern validation fallback
+            logging.info('tvservice unavailable, using modern display validation')
+            temp_display = display()
+            return temp_display._modern_validate(tvservice, special)
 
-        if not tvservice:
-            return None
+        return None
 
+    def _check_tvservice_available(self):
+        """Check if tvservice command is available (backward compatibility)"""
         try:
-            output = subprocess.check_output(['tvservice', '-s'], stderr=subprocess.DEVNULL).decode('utf-8')
-            if output.find(tvservice) == -1:
-                return None
-        except:
-            return None
+            subprocess.run(['tvservice', '--help'], capture_output=True, timeout=5, check=False)
+            return True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
 
+    def _get_framebuffer_info(self):
+        """Get current framebuffer information for modern display detection"""
         try:
-            output = subprocess.check_output(['tvservice', '-v', tvservice], stderr=subprocess.DEVNULL).decode('utf-8')
-            m = re.search(r'(\d+)x(\d+)', output)
-            if m:
-                width = int(m.group(1))
-                height = int(m.group(2))
-                depth = 32
-                reverse = False
+            # Get framebuffer info using fbset
+            output = subprocess.check_output(['fbset', '-s'], stderr=subprocess.DEVNULL).decode('utf-8')
+            
+            # Parse fbset output
+            width = height = depth = None
+            for line in output.split('\n'):
+                if 'geometry' in line:
+                    parts = line.split()
+                    if len(parts) >= 6:
+                        width = int(parts[1])
+                        height = int(parts[2]) 
+                        depth = int(parts[5])
+                        break
+            
+            if width and height and depth:
                 return {
                     'width': width,
                     'height': height,
-                    'depth': depth,
-                    'reverse': reverse,
-                    'tvservice': tvservice
+                    'depth': depth
                 }
-        except:
-            pass
-
+        except Exception as e:
+            logging.debug(f'Failed to get framebuffer info: {e}')
+        
         return None
+
+    def _modern_available(self):
+        """Modern fallback for display mode detection when tvservice unavailable"""
+        modes = []
+        try:
+            # Get current working resolution from framebuffer
+            fb_info = self._get_framebuffer_info()
+            if fb_info:
+                mode_str = f"{fb_info['width']}x{fb_info['height']}-{fb_info['depth']}@60"
+                modes.append(mode_str)
+                logging.info(f'Detected current framebuffer mode: {mode_str}')
+            
+            # Add common fallback modes for HDMI displays
+            common_modes = [
+                "1920x1080-32@60", "1280x720-32@60", "800x480-16@60", 
+                "1024x768-32@60", "800x600-32@60"
+            ]
+            for mode in common_modes:
+                if mode not in modes:
+                    modes.append(mode)
+                    
+        except Exception as e:
+            logging.debug(f'Modern display detection failed: {e}')
+            # Safe fallback
+            modes = ["1280x720-32@60", "800x480-16@60"]
+        
+        return modes
+
+    def _modern_validate(self, requested_mode, special):
+        """Modern fallback for display validation when tvservice unavailable"""
+        if special:
+            # For special modes, return default safe values
+            return {
+                'width': 1280,
+                'height': 720,
+                'depth': 32,
+                'reverse': False,
+                'tvservice': special
+            }
+        
+        # Get current framebuffer info
+        fb_info = self._get_framebuffer_info()
+        if fb_info:
+            tvservice_str = f"{fb_info['width']}x{fb_info['height']}-{fb_info['depth']}@60"
+            logging.info(f'Modern validation using framebuffer: {tvservice_str}')
+            return {
+                'width': fb_info['width'],
+                'height': fb_info['height'],
+                'depth': fb_info['depth'],
+                'reverse': False,  # Assume RGB for modern HDMI displays
+                'tvservice': tvservice_str
+            }
+        
+        # Final fallback - return None to trigger default behavior
+        return None
+
+    def _modern_enable(self, enable):
+        """Modern fallback for display control when tvservice unavailable"""
+        try:
+            if enable:
+                logging.info('Modern display enable: configuring framebuffer only')
+                # On modern systems, display management is handled by DRM/KMS
+                # We just ensure framebuffer settings are applied
+                debug.subprocess_call(['fbset', '-depth', str(self.depth)], stderr=self.void)
+                debug.subprocess_call(['fbset', '-g', str(self.width), str(self.height), 
+                                     str(self.width), str(self.height), str(self.depth)], stderr=self.void)
+                debug.subprocess_call(['fbset', '-accel', 'true'], stderr=self.void)
+            else:
+                logging.info('Modern display disable: blanking framebuffer')
+                # Blank the framebuffer to turn off display
+                try:
+                    with open('/sys/class/graphics/fb0/blank', 'w') as f:
+                        f.write('1')  # Blank display
+                except:
+                    logging.debug('Could not blank framebuffer via sysfs')
+        except Exception as e:
+            logging.debug(f'Modern display control failed: {e}')
