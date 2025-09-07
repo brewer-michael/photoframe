@@ -482,8 +482,14 @@ class Immich(BaseService):
             os.unlink(filename)
         logging.info(f'Cleared image information for {keyword}')
 
-    def selectImageFromAlbum(self, destinationDir, supportedMimeTypes, displaySize, randomize):
-        result = BaseService.selectImageFromAlbum(self, destinationDir, supportedMimeTypes, displaySize, randomize)
+    def selectRandomImageFromAlbum(self, destinationDir, supportedMimeTypes, displaySize):
+        result = BaseService.selectRandomImageFromAlbum(self, destinationDir, supportedMimeTypes, displaySize)
+        if result is not None:
+            return result
+        return BaseService.createImageHolder(self).setError('Immich service ready.\nReal photo retrieval available for configured albums.')
+    
+    def selectNextImageFromAlbum(self, destinationDir, supportedMimeTypes, displaySize):
+        result = BaseService.selectNextImageFromAlbum(self, destinationDir, supportedMimeTypes, displaySize)
         if result is not None:
             return result
         return BaseService.createImageHolder(self).setError('Immich service ready.\nReal photo retrieval available for configured albums.')
