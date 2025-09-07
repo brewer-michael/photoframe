@@ -411,7 +411,7 @@ class Immich(BaseService):
         config = self.getImmichConfiguration()
         if not config or 'server_url' not in config:
             return None
-        asset_id = image.getId()
+        asset_id = image.id
         if not asset_id:
             return None
         return f"{config['server_url']}/api/assets/{asset_id}/original"
