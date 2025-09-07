@@ -25,46 +25,6 @@ from modules.network import RequestResult, RequestNoNetwork
 from modules.helper import helper
 
 
-class ImmichAlbum:
-    """Represents an Immich album."""
-    def __init__(self, data, server_url):
-        self.album_id = data.get('id')
-        self.album_name = data.get('albumName', data.get('name', 'Unknown'))
-        self.description = data.get('description', '')
-        self.asset_count = data.get('assetCount', 0)
-        self.created_at = data.get('createdAt', '')
-        self.updated_at = data.get('updatedAt', '')
-        self.server_url = server_url
-        self.assets = [ImmichAsset(a, server_url) for a in data.get('assets', [])]
-
-    def source_url(self):
-        return f'{self.server_url}/albums/{self.album_id}'
-
-
-class ImmichAsset:
-    """Represents a single asset within an Immich album."""
-    SUPPORTED_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif',
-                            'image/webp', 'image/tiff', 'image/tif', 'image/bmp']
-
-    def __init__(self, data, server_url):
-        self.asset_id = data.get('id')
-        self.original_file_name = data.get('originalFileName')
-        self.mime_type = data.get('type') or 'image/jpeg'
-        self.exif_info = data.get('exifInfo', {})
-        self.server_url = server_url
-
-        if self.mime_type not in self.SUPPORTED_MIME_TYPES:
-            self.mime_type = None
-
-    def is_valid(self):
-        return self.asset_id is not None and self.mime_type is not None
-
-    def get_content_url(self):
-        if not self.asset_id:
-            return None
-        return f'{self.server_url}/api/assets/{self.asset_id}/original'
-
-
 class Immich(BaseService):
     SERVICE_NAME = 'Immich'
     SERVICE_ID = 10
@@ -102,7 +62,7 @@ class Immich(BaseService):
             return 'Server URL must start with http:// or https://'
         if server_url.endswith('/'):
             config['server_url'] = server_url[:-1]
-        logging.info('Immich configuration validated successfully (Phase 1 - format only)')
+        logging.info('Immich configuration validated successfully')
         return True
 
     def helpKeywords(self):
@@ -286,16 +246,14 @@ class Immich(BaseService):
     # ------------------ Image Retrieval ------------------
 
     def getImagesFor(self, keyword, rawReturn=False):
-        """Get images for keyword, now fetching full asset info from Immich"""
+        """Get images for keyword, fetching full asset info from Immich"""
         logging.warning(f'IMMICH GETIMAGESFOR CALLED: keyword="{keyword}", rawReturn={rawReturn}')
         
-        # Step 1: Get query like Google Photos does
         query = self.getQueryForKeyword(keyword)
         if query is None:
             logging.error(f'Unable to create query for keyword "{keyword}"')
             return []
 
-        # Step 2: Get Immich config
         config = self.getImmichConfiguration()
         if not config or 'server_url' not in config or 'api_key' not in config:
             logging.error('Immich configuration not found')
@@ -303,7 +261,7 @@ class Immich(BaseService):
 
         headers = {'x-api-key': config['api_key']}
 
-        # Step 3: Fetch album metadata (contains asset IDs)
+        # Fetch album metadata (contains asset IDs)
         album_url = f"{config['server_url']}/api/albums/{query['albumId']}"
         try:
             response = requests.get(album_url, headers=headers, timeout=30)
@@ -317,7 +275,7 @@ class Immich(BaseService):
                 logging.error(f'No assets found in album response for keyword "{keyword}"')
                 return []
 
-            # Step 4: Fetch full info for each asset
+            # Fetch full info for each asset
             full_assets = []
             for i, asset in enumerate(asset_refs):
                 asset_id = asset.get('id')
@@ -337,7 +295,7 @@ class Immich(BaseService):
             logging.error(f'Failed to get images for keyword "{keyword}": {e}')
             return []
 
-        # Step 5: Cache to JSON file
+        # Cache to JSON file
         filename = os.path.join(self.getStoragePath(), self.hashString(keyword) + '.json')
         try:
             with open(filename, 'w') as f:
@@ -345,96 +303,107 @@ class Immich(BaseService):
         except Exception as e:
             logging.exception(f'Failed to save JSON cache file: {e}')
 
-        # Step 6: Handle rawReturn
         if rawReturn:
             return full_assets
 
-        # Step 7: Parse and return as ImageHolder objects
         return self.parseAlbumInfo(full_assets, keyword)
-
 
     def parseAlbumInfo(self, data, keyword):
         """Convert Immich assets to ImageHolder objects that BaseService can use"""
         logging.info(f'Parsing {len(data)} assets for keyword "{keyword}"')
         result = []
-
-        # Define supported MIME types (matching what photoframe supports)
+        
         supported_images = {
-          'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
-          'image/webp', 'image/tiff', 'image/tif', 'image/bmp'
+            'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
+            'image/webp', 'image/tiff', 'image/tif', 'image/bmp'
         }
-
+        
         for i, asset in enumerate(data):
-          # Get asset ID (required)
-          asset_id = asset.get('id')
-          if not asset_id:
-            logging.warning(f'Asset {i+1} missing ID, skipping')
-            continue
-
-          # --- START: CORRECTED LOGIC ---
-
-          # 1. Use the 'type' field to correctly identify and skip videos.
-          asset_type = asset.get('type')
-          if asset_type == 'VIDEO':
-            logging.debug(f'Asset {i+1}: skipping video {asset_id} based on type field')
-            continue
-          
-          # 2. Get the actual mimeType.
-          mime_type = asset.get('mimeType')
-
-          # 3. If mimeType is missing, infer it from the filename.
-          if not mime_type:
-            original_filename = (asset.get('originalFileName', '') or '').lower()
-            if original_filename.endswith(('.jpg', '.jpeg')):
-              mime_type = 'image/jpeg'
-            elif original_filename.endswith('.png'):
-              mime_type = 'image/png'
-            elif original_filename.endswith('.gif'):
-              mime_type = 'image/gif'
-            elif original_filename.endswith('.webp'):
-              mime_type = 'image/webp'
-            elif original_filename.endswith(('.tiff', '.tif')):
-              mime_type = 'image/tiff'
-            elif original_filename.endswith('.bmp'):
-              mime_type = 'image/bmp'
-            else:
-              # If we can't determine, log it and skip.
-              logging.warning(f'Asset {i+1} ({asset_id}): could not determine mimeType, skipping.')
-              continue
-
-          # 4. Filter out unsupported image types.
-          if mime_type not in supported_images:
-            logging.debug(f'Asset {i+1}: skipping unsupported type {mime_type}')
-            continue
-          
-          # --- END: CORRECTED LOGIC ---
-
-          # Create ImageHolder with proper metadata
-          image = self.createImageHolder()
-          image.setId(asset_id)
-          image.setMimetype(mime_type)
-
-          # Add filename if available
-          original_filename = asset.get('originalFileName')
-          if original_filename:
-            image.setFilename(original_filename)
-
-          # Set dimensions if available from EXIF
-          exif_info = asset.get('exifInfo', {}) or {}
-          width = exif_info.get('exifImageWidth')
-          height = exif_info.get('exifImageHeight')
-          if width and height:
-            try:
-              image.setDimensions(int(width), int(height))
-            except (ValueError, TypeError):
-              pass
-
-          # Enable caching for performance
-          image.allowCache(True)
-
-          result.append(image)
-          logging.debug(f'Added asset {asset_id} ({mime_type}) to results')
-
+            asset_id = asset.get('id')
+            if not asset_id:
+                logging.warning(f'Asset {i+1} missing ID, skipping')
+                continue
+            
+            # Check if it's a video and skip
+            asset_type = asset.get('type')
+            if asset_type == 'VIDEO':
+                logging.debug(f'Asset {i+1}: skipping video {asset_id}')
+                continue
+            
+            # Get the actual mimeType
+            mime_type = asset.get('mimeType')
+            
+            # If mimeType is missing, try to infer from filename
+            if not mime_type:
+                original_filename = (asset.get('originalFileName', '') or '').lower()
+                if original_filename.endswith(('.jpg', '.jpeg')):
+                    mime_type = 'image/jpeg'
+                elif original_filename.endswith('.png'):
+                    mime_type = 'image/png'
+                elif original_filename.endswith('.gif'):
+                    mime_type = 'image/gif'
+                elif original_filename.endswith('.webp'):
+                    mime_type = 'image/webp'
+                elif original_filename.endswith(('.tiff', '.tif')):
+                    mime_type = 'image/tiff'
+                elif original_filename.endswith('.bmp'):
+                    mime_type = 'image/bmp'
+                else:
+                    mime_type = 'image/jpeg'
+                    logging.debug(f'Asset {i+1}: defaulting to image/jpeg for {asset_id}')
+            
+            # Skip unsupported types
+            if mime_type not in supported_images:
+                logging.debug(f'Asset {i+1}: skipping unsupported type {mime_type}')
+                continue
+            
+            # Create ImageHolder with all required fields
+            image = self.createImageHolder()
+            
+            # Set the ID - used for tracking
+            image.setId(asset_id)
+            
+            # Set the mimetype - BaseService filters by this
+            image.setMimetype(mime_type)
+            
+            # Set the URL - BaseService might check for this
+            config = self.getImmichConfiguration()
+            if config and 'server_url' in config:
+                image.url = f"{config['server_url']}/api/assets/{asset_id}/original"
+            
+            # Set filename if available
+            original_filename = asset.get('originalFileName')
+            if original_filename:
+                image.setFilename(original_filename)
+            
+            # Set dimensions - BaseService uses this for orientation checks
+            exif_info = asset.get('exifInfo', {}) or {}
+            width = exif_info.get('exifImageWidth')
+            height = exif_info.get('exifImageHeight')
+            
+            # If EXIF dimensions aren't available, check asset level
+            if not width or not height:
+                width = asset.get('width')
+                height = asset.get('height')
+            
+            if width and height:
+                try:
+                    image.setDimensions(int(width), int(height))
+                    # Also set the dimensions dict that BaseService expects
+                    image.dimensions = {'width': int(width), 'height': int(height)}
+                except (ValueError, TypeError):
+                    logging.debug(f'Asset {i+1}: invalid dimensions for {asset_id}')
+            
+            # Enable caching
+            image.allowCache(True)
+            
+            # Set source URL for UI display
+            if config and 'server_url' in config:
+                image.source = f"{config['server_url']}/photos/{asset_id}"
+            
+            result.append(image)
+            logging.debug(f'Added asset {asset_id} ({mime_type}) with dimensions {width}x{height}')
+        
         logging.info(f'Parsed {len(result)} supported images from {len(data)} total assets')
         return result
 
@@ -446,7 +415,58 @@ class Immich(BaseService):
         if not asset_id:
             return None
         return f"{config['server_url']}/api/assets/{asset_id}/original"
-        #return f"{config['server_url']}/api/asset/file/{asset_id}"
+
+    def requestUrl(self, url, destination=None, params=None, data=None, usePost=False):
+        """Override to add Immich authentication headers"""
+        config = self.getImmichConfiguration()
+        
+        # Check if this is an Immich URL that needs authentication
+        if config and 'server_url' in config and url and url.startswith(config['server_url']):
+            headers = {'x-api-key': config['api_key']}
+            
+            tries = 0
+            while tries < 5:
+                try:
+                    if usePost:
+                        r = requests.post(url, params=params, json=data, headers=headers, timeout=180)
+                    else:
+                        r = requests.get(url, params=params, headers=headers, timeout=180, stream=True)
+                    break
+                except Exception as e:
+                    logging.exception(f'Issues downloading from Immich (attempt {tries + 1})')
+                    if tries == 4:
+                        raise RequestNoNetwork(f'Failed to connect to Immich')
+                
+                time.sleep(tries * 10)
+                tries += 1
+                logging.warning(f'Retrying Immich request, attempt #{tries + 1}')
+            
+            if tries == 5:
+                logging.error('Failed to download from Immich due to network issues')
+                raise RequestNoNetwork('Network timeout')
+            
+            result = RequestResult()
+            result.setHTTPCode(r.status_code).setHeaders(r.headers).setResult(RequestResult.SUCCESS)
+            
+            if r.status_code != 200:
+                logging.error(f'Immich returned status {r.status_code} for {url}')
+                result.setResult(RequestResult.GENERAL_ERROR)
+                return result
+            
+            if destination is None:
+                result.setContent(r.content)
+            else:
+                with open(destination, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                result.setFilename(destination)
+                logging.info(f'Downloaded Immich asset to {destination}')
+            
+            return result
+        
+        # Not an Immich URL, use parent's implementation
+        return BaseService.requestUrl(self, url, destination, params, data, usePost)
 
     # ------------------ Misc ------------------
 
@@ -467,99 +487,7 @@ class Immich(BaseService):
         if result is not None:
             return result
         return BaseService.createImageHolder(self).setError('Immich service ready.\nReal photo retrieval available for configured albums.')
-    
-    #Download the image files
-    # def downloadContentTo(self, url, destination):
-    #   """
-    #   Override the download method to include Immich API authentication.
-    #   This is crucial - without this, the BaseService can't download Immich images.
-    #   """
-    #   config = self.getImmichConfiguration()
-    #   if not config or 'api_key' not in config:
-    #     logging.error('Immich API key not found for download')
-    #     return False
 
-    #   headers = {
-    #     'x-api-key': config['api_key'],
-    #     'Accept': 'image/*'
-    #   }
-
-    #   try:
-    #     # Ensure the destination directory exists before writing
-    #     os.makedirs(os.path.dirname(destination), exist_ok=True)
-
-    #     logging.info(f'Downloading Immich asset from {url} to {destination}')
-
-    #     # Use requests to download with authentication
-    #     response = requests.get(url, headers=headers, stream=True, timeout=60)
-
-    #     if response.status_code == 200:
-    #       # Write the image data to the destination file
-    #       with open(destination, 'wb') as f:
-    #         for chunk in response.iter_content(chunk_size=8192):
-    #           if chunk:
-    #             f.write(chunk)
-
-    #       logging.info(f'Successfully downloaded Immich asset to {destination}')
-    #       return True
-    #     else:
-    #       logging.error(f'Failed to download Immich asset: HTTP {response.status_code}')
-    #       return False
-
-    #   except requests.exceptions.RequestException as e:
-    #     logging.error(f'Network error downloading Immich asset: {e}')
-    #     return False
-    #   except Exception as e:
-    #     logging.error(f'Error downloading Immich asset: {e}')
-    #     return False
-    def downloadContentTo(self, url, destination):
-      """
-      Final override of the download method. Uses a session for auth persistence
-      and shutil.copyfileobj for a robust, memory-efficient file stream.
-      """
-      config = self.getImmichConfiguration()
-      if not config or 'api_key' not in config:
-        logging.error('Immich API key not found for download')
-        return False
-
-      try:
-        # Ensure the destination directory exists before writing
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
-
-        logging.info(f'Attempting to download from {url} to {destination}')
-
-        with requests.Session() as s:
-            s.headers.update({
-                'x-api-key': config['api_key'],
-                'Accept': 'image/*'
-            })
-            # Start the request, but don't load the whole file in memory
-            with s.get(url, stream=True, timeout=60) as r:
-                # Check for errors on the response
-                r.raise_for_status()
-                
-                # Use a temporary file to prevent corruption on failed downloads
-                temp_destination = destination + ".tmp"
-                
-                # Open the destination file and stream the content into it
-                with open(temp_destination, 'wb') as f:
-                    shutil.copyfileobj(r.raw, f)
-        
-        # If the download was successful, move the temp file to the final destination
-        os.rename(temp_destination, destination)
-
-        logging.info(f'Successfully downloaded and saved Immich asset to {destination}')
-        return True
-
-      except requests.exceptions.HTTPError as e:
-          logging.error(f'HTTP Error during download: {e.response.status_code} {e.response.reason}')
-          logging.error(f'Response body: {e.response.text}')
-          return False
-      except Exception as e:
-          # Log the full exception to get the real root cause
-          logging.exception(f'An unexpected error occurred in downloadContentTo: {e}')
-          return False
-      
     def getMessages(self):
         msgs = BaseService.getMessages(self)
         if self.hasConfiguration():
